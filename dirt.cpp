@@ -4,7 +4,7 @@
  * Created By        Marcus Kelly
  *    Contact        nexuslite@gmail.com
  * Created On        Feb 23, 2014
- * Updated On        Mar 14, 2014
+ * Updated On        Mar 19, 2014
  * -------------------------------------------
  * Copyright 2014 Marcus Kelly
  **********************************************/
@@ -29,7 +29,7 @@ using namespace std;
 
 string VersionHigh = "0";
 string VersionLow = "1a";
-int raidLevel = 5;
+int raidLevel = 1;
 string fileSystem = "ext4";
 int raidStartBlock = 0;
 int raidBlockSize = 65536;
@@ -58,10 +58,10 @@ void help() {
   cout << "  inode=[inode]        Display Inode\n";
   cout << "  l                    List Drives\n";
   //cout << "  o                    Order Drives\n";
-  //cout << "  rl=[level]            Change Raid Level [0, 1, 2, 3, 4, 5, 6]
   cout << "  rbs                  Raid Block Size Selection Menu\n";
   cout << "  rd                   Dump Raid Block as ASCII\n";
   cout << "  rd=[block]           Dump Raid Block as ASCII\n";
+  cout << "  rl=[level]           Set Raid Level [0, 1, 2, 3, 4, 5, 6]\n";
   cout << "  rsb=[block]          Raid Start in Drive Block (dependent on Block Size)\n";
   cout << "  rs=[string]          Raid Search\n";
   cout << "  ru                   Dump Raid Block as HEX\n";
@@ -144,22 +144,30 @@ void setBlockSize() {
 
 void setRaidBlockSize() {
       string opt;
-      cout << "1:  64K\n";
-      cout << "2: 128K\n";
-      cout << "3: 256K\n";
-      cout << "4: 512K\n";
+      cout << "1:  16K\n";
+      cout << "2:  32K\n";
+      cout << "3:  64K\n";
+      cout << "4: 128K\n";
+      cout << "5: 256K\n";
+      cout << "6: 512K\n";
       cout << ":";
       cin >> opt;
       if (opt.compare(0, 1, "1") == 0) {
-        raidBlockSize = 65536;
+        raidBlockSize = 16384;
       }
       if (opt.compare(0, 1, "2") == 0) {
-        raidBlockSize = 131072;
+        raidBlockSize = 32768;
       }
       if (opt.compare(0, 1, "3") == 0) {
-        raidBlockSize = 262144;
+        raidBlockSize = 65536;
       }
       if (opt.compare(0, 1, "4") == 0) {
+        raidBlockSize = 131072;
+      }
+      if (opt.compare(0, 1, "5") == 0) {
+        raidBlockSize = 262144;
+      }
+      if (opt.compare(0, 1, "6") == 0) {
         raidBlockSize = 524288;
       }
 }
@@ -279,6 +287,13 @@ int main() {
       }
       raidStartBlock = atoi(cmd.substr(4, cmd.length()-1).c_str());
     }
+    else if (cmd.compare(0, 2, "rl") == 0) {
+      if (cmd.length() < 3) {
+         cout << "Invalid input for command a\n";
+         continue;
+      }
+      raidLevel = atoi(cmd.substr(3, cmd.length()-1).c_str());
+    }
     /* Hex and Ascii dump command */
     else if (cmd.compare(0, 1, "d") == 0 || cmd.compare(0, 1, "u") == 0) {
       if (cmd.length() > 2) {
@@ -325,47 +340,79 @@ int main() {
 
       cout << "INODE " << inode << "\n";
 
+	//int s_inodes_per_group = 8192;
 	int s_inodes_per_group = 8192;
 	int s_inode_size = 256;
 	int bg = (inode - 1) / s_inodes_per_group;		// Which Group Number
 	int bgsector = bg / 16 + 8;					// = bg sector
 	int bgoffset = bg % 16 * 32;
 
-        int TotalDisks = currentDrive+1;
-        int DataDisks = currentDrive;
-	int SectorsPerBlock = raidBlockSize/bufferSize;
-	unsigned int BlockNumber = bgsector/SectorsPerBlock;
-        unsigned int DriveBlock = bgsector%(SectorsPerBlock)+(BlockNumber/(DataDisks-1)*SectorsPerBlock)+raidStartBlock;
-	int BlockRadius = BlockNumber%(DataDisks*TotalDisks);
-	int ParityDrive = ((TotalDisks-1)-(int) (BlockRadius/DataDisks))-1;
-	int DataDrive = (BlockRadius%(DataDisks-1));
-	if (ParityDrive <= DataDrive) {
-	    DataDrive++;
+	cout << "bg: " << bg << " ipg: " << s_inodes_per_group << "\n";
+	cout << "bgsector: " << bgsector << " bgoffset: " << bgoffset << "\n";
+	int TotalDisks, DataDisks, BlockRadius, ParityDrive, DataDrive;
+	unsigned int BlockNumber, DriveBlock, SectorsPerBlock;
+
+	if (raidLevel == 5) {
+        	TotalDisks = currentDrive;
+        	DataDisks = currentDrive-1;
+		SectorsPerBlock = raidBlockSize/bufferSize;
+		BlockNumber = bgsector/SectorsPerBlock;
+        	DriveBlock = bgsector%(SectorsPerBlock)+(BlockNumber/(DataDisks)*SectorsPerBlock)+raidStartBlock;
+		BlockRadius = BlockNumber%(DataDisks*TotalDisks);
+		ParityDrive = ((TotalDisks-1)-(BlockRadius/DataDisks));
+		DataDrive = (BlockRadius%(DataDisks));
+		if (ParityDrive <= DataDrive) {
+		    DataDrive++;
+		}
+
+
+/*
+		BlockRadius = 0-5
+		0/2 = 0 2-0 = 0
+		1/2 = 0 2-0 = 0
+		2/2 = 1 2-1 = 1
+		3/2 = 1 2-1 = 1
+		4/2 = 2 2-2 = 0
+		5/2 = 2 2-2 = 0
+*/
+	}
+	else {
+		DriveBlock = bgsector;
+		DataDrive = 0;
 	}
 
         zeroIgnoredDrive();
         readDrives(DriveBlock);
         createIgnoredDrive();
 
-	int bg_inode_table_lo = (((int) buffer[DataDrive][bgoffset+11]) << 24) + (((int) buffer[DataDrive][bgoffset+10]) << 16) + (((int) buffer[DataDrive][bgoffset+9]) << 8) + ((int) buffer[DataDrive][bgoffset+8]);
+	unsigned int bg_inode_table_lo = (((unsigned char) buffer[DataDrive][bgoffset+11]) << 24) + (((unsigned char) buffer[DataDrive][bgoffset+10]) << 16) + (((unsigned char) buffer[DataDrive][bgoffset+9]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+8]);
+
+	//unsigned int bg_inode_table_lo = (unsigned char) buffer[DataDrive][bgoffset+8];
+
 	cout << "Inode Table " << bg_inode_table_lo << "\n";
 
 	int index = (inode - 1) % s_inodes_per_group;		// Which Item in that group
 	int offset = index * s_inode_size;				// Offset of Item into INODE Table
-	int InodeTableSector = bg_inode_table_lo * 8;		// sector of inode table from block group
-	int InodeEntrySector = offset / 512 + InodeTableSector;	// sector of inode entry
+	unsigned int InodeTableSector = bg_inode_table_lo * 8;		// sector of inode table from block group
+	unsigned int InodeEntrySector = offset / 512 + InodeTableSector;	// sector of inode entry
 	int EntryOffset = offset % 512;
 
 
-
-	BlockNumber = InodeEntrySector/SectorsPerBlock;
-        DriveBlock = InodeEntrySector%(SectorsPerBlock)+(BlockNumber/(DataDisks-1)*SectorsPerBlock)+raidStartBlock;
-	BlockRadius = BlockNumber%(DataDisks*TotalDisks);
-	ParityDrive = ((TotalDisks-1)-(int) (BlockRadius/DataDisks))-1;
-	DataDrive = (BlockRadius%(DataDisks-1));
-	if (ParityDrive <= DataDrive) {
-	    DataDrive++;
+	if (raidLevel == 5) {
+		BlockNumber = InodeEntrySector/SectorsPerBlock;
+        	DriveBlock = InodeEntrySector%(SectorsPerBlock)+(BlockNumber/(DataDisks)*SectorsPerBlock)+raidStartBlock;
+		BlockRadius = BlockNumber%(DataDisks*TotalDisks);
+		ParityDrive = ((TotalDisks-1)-(BlockRadius/DataDisks));
+		DataDrive = (BlockRadius%(DataDisks));
+		if (ParityDrive <= DataDrive) {
+		    DataDrive++;
+		}
 	}
+	else {
+		DriveBlock = InodeEntrySector;
+		DataDrive = 0;
+	}
+
 
         zeroIgnoredDrive();
         readDrives(DriveBlock);
@@ -410,6 +457,7 @@ int main() {
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+96]) << uchar2hex(buffer[DataDrive][EntryOffset+97]) << uchar2hex(buffer[DataDrive][EntryOffset+98]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+99]);
 
+
         inode++;
 	
 
@@ -426,18 +474,28 @@ int main() {
       }
 
 
-        int TotalDisks = currentDrive+1;
-        int DataDisks = currentDrive;
-	int SectorsPerBlock = raidBlockSize/bufferSize;
-	unsigned int BlockNumber = dumpRaidSector/SectorsPerBlock;
-        unsigned int DriveBlock = dumpRaidSector%(SectorsPerBlock)+(BlockNumber/(DataDisks-1)*SectorsPerBlock)+raidStartBlock;
-	int BlockRadius = BlockNumber%(DataDisks*TotalDisks);
-	int ParityDrive = ((TotalDisks-1)-(int) (BlockRadius/DataDisks))-1;
-	int DataDrive = (BlockRadius%(DataDisks-1));
+      int TotalDisks, DataDisks, BlockRadius, ParityDrive, DataDrive;
+      unsigned int BlockNumber, DriveBlock, SectorsPerBlock;
+
+      if (raidLevel == 5) {
+        TotalDisks = currentDrive;
+        DataDisks = currentDrive-1;
+	SectorsPerBlock = raidBlockSize/bufferSize;
+	BlockNumber = dumpRaidSector/SectorsPerBlock;
+        DriveBlock = dumpRaidSector%(SectorsPerBlock)+(BlockNumber/(DataDisks)*SectorsPerBlock)+raidStartBlock;
+	BlockRadius = BlockNumber%(DataDisks*TotalDisks);
+	ParityDrive = ((TotalDisks-1)-(BlockRadius/DataDisks));
+	DataDrive = (BlockRadius%(DataDisks));
 	if (ParityDrive <= DataDrive) {
 	    DataDrive++;
 	}
+      }
+      else {
+          DriveBlock = dumpRaidSector;
+          DataDrive = 0;
+      }
 
+      cout << "TotalDisks: " << TotalDisks << ", DataDisks: " << DataDisks << "\n";
       cout << "SectorsPerBlock: " << SectorsPerBlock << ", BlockNumber: " << BlockNumber << ", BlockRadius: " << BlockRadius << ", ParityDrive: " << ParityDrive << "\n";
 
 
