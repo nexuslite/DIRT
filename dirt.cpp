@@ -21,6 +21,12 @@
 #include <sstream>  /* uchar2hex */
 #include <iomanip>  /* uchar2hex */
 
+//#include <stdint.h> /* int64_t */
+//#include <cstdint>
+
+//#include <iostream> /* str.copy */
+//#include <string> /* str.copy */
+
 
 using namespace std;
 
@@ -46,7 +52,7 @@ int ignoredDrive = -1;
 streampos dsize = 0;
 int inode;
 int BlockAdjust=0;
-int CurrentDirectory = 73992;
+unsigned int CurrentDirectory = 73992;
 
 void help() {
   cout << "---------------------------------------\n";
@@ -67,6 +73,7 @@ void help() {
   cout << "  ru[=block]           Dump Raid Block as HEX (Next if no number given)\n";
 //  cout << "  sd=[sector]          Set Directory\n";
 //  cout << "  dir                  List Directory\n";
+//  cout << "  ls                   List Directory\n";
 //  cout << "  cd=[name]            Change Directory\n";
 //  cout << "  fd=[name]            File Dump (Saves file in current system directory)\n";
 //  cout << "  save                 Save Configuration (Saves in current system directory)\n";
@@ -80,15 +87,15 @@ void help() {
 
 }
 
-void conf() {
+void stat() {
   cout << "---------------------------------------\n";
   cout << "Block Size: " << bufferSize << "\n";
   cout << "Raid Level: " << raidLevel << "\n";
   cout << "Raid Start Block: " << raidStartBlock << "\n";
   cout << "Raid Block Size: " << raidBlockSize << "\n";
-  cout << "Raid Parity Adjust: " << ParityAdjust << "\n";
   cout << "Raid Block Adjust: " << BlockAdjust << "\n";
   cout << "File System: " << fileSystem << "\n";
+  cout << "Current Directory: " << CurrentDirectory << "\n";
   cout << "---------------------------------------\n";
 }
 
@@ -244,6 +251,40 @@ void createIgnoredDrive() {
   }
 }
 
+int ReadRAID(unsigned int sector) {
+	int TotalDisks, DataDisks, BlockRadius, PBlockRadius, ParityDrive, RoundNumber, DataDrive;
+	unsigned int BlockNumber, DriveBlock, SectorsPerBlock;
+	if (raidLevel == 5) {
+        	TotalDisks = currentDrive;
+        	DataDisks = currentDrive-1;
+		SectorsPerBlock = raidBlockSize/bufferSize;
+		BlockNumber = (sector/SectorsPerBlock)+BlockAdjust;
+        	DriveBlock = sector%(SectorsPerBlock)+(BlockNumber/(DataDisks)*SectorsPerBlock)+raidStartBlock;
+		//BlockRadius = BlockNumber%(DataDisks*TotalDisks);
+		//PBlockRadius = (BlockNumber+(ParityAdjust*DataDisks))%(DataDisks*TotalDisks);
+		//ParityDrive = ((TotalDisks-1)-(PBlockRadius/DataDisks));
+		DataDrive = BlockNumber%(TotalDisks);
+		//DataDrive = (BlockRadius%(DataDisks));
+		//if (ParityDrive <= DataDrive) {
+		//    DataDrive++;
+		//}
+	}
+	else {
+		DriveBlock = CurrentDirectory;
+		DataDrive = 0;
+	}
+
+      //cout << "TotalDisks: " << TotalDisks << ", DataDisks: " << DataDisks << "\n";
+      //cout << "SectorsPerBlock: " << SectorsPerBlock << ", BlockNumber: " << BlockNumber << ", BlockRadius: " << BlockRadius << ", ParityDrive: " << ParityDrive << "\n";
+      //cout << "DriveBlock: " << DriveBlock << ", DataDrive: " << DataDrive << "\n";
+
+
+        zeroIgnoredDrive();
+        readDrives(DriveBlock);
+        createIgnoredDrive();
+	return DataDrive;
+}
+
 int main() {
   int run = 1;
 
@@ -283,17 +324,66 @@ int main() {
         setBlockSize();
     }
     else if (cmd.compare(0, 4, "stat") == 0) {
-        conf();
+        stat();
     }
     else if (cmd.compare(0, 3, "rbs") == 0) {
         setRaidBlockSize();
     }
     else if (cmd.compare(0, 3, "rsb") == 0) {
       if (cmd.length() < 4) {
-         cout << "Invalid input for command a\n";
+         cout << "Invalid input for command rsb\n";
          continue;
       }
       raidStartBlock = atoi(cmd.substr(4, cmd.length()-1).c_str());
+    }
+    else if (cmd.compare(0, 2, "sd") == 0) {
+      if (cmd.length() < 3) {
+         cout << "Invalid input for command sd\n";
+         continue;
+      }
+      CurrentDirectory = atoi(cmd.substr(3, cmd.length()-1).c_str());
+    }
+    else if (cmd.compare(0, 2, "ls") == 0 || cmd.compare(0, 3, "dir") == 0) {
+	int  DataDrive;
+	DataDrive = ReadRAID(CurrentDirectory);
+	int CDPos = 1;
+
+	int pos = 6;
+	int name_len;
+	int i, file_type;
+	do {
+
+		//while (((unsigned char) buffer[DataDrive][pos-1]) > 0x0F) {
+		//	pos += 4;
+		//}
+		name_len = ((unsigned char) buffer[DataDrive][pos]);
+		inode = ((unsigned int) (((unsigned char) buffer[DataDrive][pos-3]) << 24) + (((unsigned char) buffer[DataDrive][pos-4]) << 16) + (((unsigned char) buffer[DataDrive][pos-5]) << 8) + ((unsigned char) buffer[DataDrive][pos-6]));
+		pos += 2;
+		for (i = 0; i < name_len; i++) {
+			cout << buffer[DataDrive][pos+i];
+			if ((pos+i) >= 255) {
+				DataDrive = ReadRAID(CurrentDirectory+CDPos);
+				CDPos++;
+			}
+		}
+
+		cout << "     " << inode << "\n";
+
+		while ((name_len % 4) != 0) {
+			name_len++;
+		}
+
+
+		// cout << dir_name << "\n";
+		pos += name_len + 6;
+		if ((pos) >= 255) {
+		   DataDrive = ReadRAID(CurrentDirectory+CDPos);
+		   CDPos++;
+		}
+
+		name_len = ((unsigned char) buffer[DataDrive][pos]);
+	} while (name_len != 0);
+
     }
     else if (cmd.compare(0, 2, "rl") == 0) {
       if (cmd.length() < 3) {
@@ -362,33 +452,9 @@ int main() {
 
 	cout << "bg: " << bg << " ipg: " << s_inodes_per_group << "\n";
 	cout << "bgsector: " << bgsector << " bgoffset: " << bgoffset << "\n";
-	int TotalDisks, DataDisks, BlockRadius, PBlockRadius, ParityDrive, RoundNumber, DataDrive;
-	unsigned int BlockNumber, DriveBlock, SectorsPerBlock;
+	int  DataDrive;
 
-	if (raidLevel == 5) {
-        	TotalDisks = currentDrive;
-        	DataDisks = currentDrive-1;
-		SectorsPerBlock = raidBlockSize/bufferSize;
-		BlockNumber = (bgsector/SectorsPerBlock)+BlockAdjust;
-        	DriveBlock = bgsector%(SectorsPerBlock)+(BlockNumber/(DataDisks)*SectorsPerBlock)+raidStartBlock;
-		//BlockRadius = BlockNumber%(DataDisks*TotalDisks);
-		//PBlockRadius = (BlockNumber+(ParityAdjust*DataDisks))%(DataDisks*TotalDisks);
-		//ParityDrive = ((TotalDisks-1)-(PBlockRadius/DataDisks));
-		DataDrive = BlockNumber%(TotalDisks);
-		//DataDrive = (BlockRadius%(DataDisks));
-		//if (ParityDrive <= DataDrive) {
-		//    DataDrive++;
-		//}
-
-	}
-	else {
-		DriveBlock = bgsector;
-		DataDrive = 0;
-	}
-
-        zeroIgnoredDrive();
-        readDrives(DriveBlock);
-        createIgnoredDrive();
+	DataDrive = ReadRAID(bgsector);
 
 	unsigned int bg_inode_table_lo = (((unsigned char) buffer[DataDrive][bgoffset+11]) << 24) + (((unsigned char) buffer[DataDrive][bgoffset+10]) << 16) + (((unsigned char) buffer[DataDrive][bgoffset+9]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+8]);
 
@@ -401,68 +467,108 @@ int main() {
 	unsigned int InodeEntrySector = offset / 512 + InodeTableSector;	// sector of inode entry
 	int EntryOffset = offset % 512;
 
-
-	if (raidLevel == 5) {
-		BlockNumber = (InodeEntrySector/SectorsPerBlock)+BlockAdjust;
-        	DriveBlock = InodeEntrySector%(SectorsPerBlock)+(BlockNumber/(DataDisks)*SectorsPerBlock)+raidStartBlock;
-		//BlockRadius = BlockNumber%(DataDisks*TotalDisks);
-		//PBlockRadius = (BlockNumber+(ParityAdjust*DataDisks))%(DataDisks*TotalDisks);
-		//ParityDrive = ((TotalDisks-1)-(PBlockRadius/DataDisks));
-		DataDrive = BlockNumber%(TotalDisks);
-		//DataDrive = (BlockRadius%(DataDisks));
-
-		//if (ParityDrive <= DataDrive) {
-		//    DataDrive++;
-		//}
-	}
-	else {
-		DriveBlock = InodeEntrySector;
-		DataDrive = 0;
-	}
-
-
-        zeroIgnoredDrive();
-        readDrives(DriveBlock);
-        createIgnoredDrive();
+	DataDrive = ReadRAID(InodeEntrySector);
 
 	cout << "index: " << index << " offset " << offset << "\n";
 	cout << "InodeEntrySector: " << InodeEntrySector << " EntryOffset: " << EntryOffset << "\n";
 	cout << "InodeTableSector: " << InodeTableSector << "\n";
 
-
 	cout << "i_mode: " << ((((unsigned char) buffer[DataDrive][EntryOffset+1]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+0])) << "\n";
 	cout << "i_uid: " << ((((unsigned char) buffer[DataDrive][EntryOffset+3]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+2])) << "\n";
-	cout << "i_size_lo: " << ((((unsigned char) buffer[DataDrive][EntryOffset+7]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+6]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+5]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+4])) << "\n";
-
+	cout << "i_size_lo: " << ((((unsigned char) buffer[DataDrive][EntryOffset+7]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+6]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+5]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+4]));
+	cout << ", i_size_high: " << ((((unsigned char) buffer[DataDrive][EntryOffset+111]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+110]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+109]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+108])) << "\n";
+	//uint64_t i_size = ((((unsigned char) buffer[DataDrive][EntryOffset+111]) << 56) + (((unsigned char) buffer[DataDrive][EntryOffset+110]) << 48) + (((unsigned char) buffer[DataDrive][EntryOffset+109]) << 40) + (((unsigned char) buffer[DataDrive][bgoffset+108]) << 32) + (((unsigned char) buffer[DataDrive][EntryOffset+7]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+6]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+5]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+4]));
+	//cout <<  "i_size: " << i_size << "\n";
+	cout << "i_atime: " << ((((unsigned char) buffer[DataDrive][EntryOffset+11]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+10]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+9]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+8]));
+	cout << ", i_atime_extra: " << ((((unsigned char) buffer[DataDrive][EntryOffset+143]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+142]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+141]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+140])) << "\n";
+	cout << "i_ctime: " << ((((unsigned char) buffer[DataDrive][EntryOffset+15]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+14]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+13]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+12]));
+	cout << ", i_ctime_extra: " << ((((unsigned char) buffer[DataDrive][EntryOffset+135]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+134]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+133]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+132])) << "\n";
+	cout << "i_mtime: " << ((((unsigned char) buffer[DataDrive][EntryOffset+19]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+18]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+17]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+16]));
+	cout << ", i_mtime_extra: " << ((((unsigned char) buffer[DataDrive][EntryOffset+139]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+138]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+137]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+136])) << "\n";
+	cout << "i_dtime: " << ((((unsigned char) buffer[DataDrive][EntryOffset+23]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+22]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+21]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+20])) << "\n";
+	cout << "i_gid: " << ((((unsigned char) buffer[DataDrive][EntryOffset+25]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+24])) << "\n";
+	cout << "i_links_count: " << ((((unsigned char) buffer[DataDrive][EntryOffset+27]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+26])) << "\n";
+	cout << "i_blocks_lo: " << ((((unsigned char) buffer[DataDrive][EntryOffset+31]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+30]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+29]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+28])) << "\n";
+	cout << "i_flags: " << ((((unsigned char) buffer[DataDrive][EntryOffset+35]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+34]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+33]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+32])) << "\n";
+	cout << "osd1: " << uchar2hex(buffer[DataDrive][EntryOffset+36]) << uchar2hex(buffer[DataDrive][EntryOffset+37]) << uchar2hex(buffer[DataDrive][EntryOffset+38]) << uchar2hex(buffer[DataDrive][EntryOffset+39]) << "\n";
 	cout << "i_block: " << uchar2hex(buffer[DataDrive][EntryOffset+40]) << uchar2hex(buffer[DataDrive][EntryOffset+41]) << uchar2hex(buffer[DataDrive][EntryOffset+42]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+43]) << uchar2hex(buffer[DataDrive][EntryOffset+44]) << uchar2hex(buffer[DataDrive][EntryOffset+45]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+46]) << uchar2hex(buffer[DataDrive][EntryOffset+47]) << uchar2hex(buffer[DataDrive][EntryOffset+48]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+49]);
-
         cout << uchar2hex(buffer[DataDrive][EntryOffset+50]) << uchar2hex(buffer[DataDrive][EntryOffset+51]) << uchar2hex(buffer[DataDrive][EntryOffset+52]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+53]) << uchar2hex(buffer[DataDrive][EntryOffset+54]) << uchar2hex(buffer[DataDrive][EntryOffset+55]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+56]) << uchar2hex(buffer[DataDrive][EntryOffset+57]) << uchar2hex(buffer[DataDrive][EntryOffset+58]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+59]);
-
         cout << uchar2hex(buffer[DataDrive][EntryOffset+60]) << uchar2hex(buffer[DataDrive][EntryOffset+61]) << uchar2hex(buffer[DataDrive][EntryOffset+62]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+63]) << uchar2hex(buffer[DataDrive][EntryOffset+64]) << uchar2hex(buffer[DataDrive][EntryOffset+65]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+66]) << uchar2hex(buffer[DataDrive][EntryOffset+67]) << uchar2hex(buffer[DataDrive][EntryOffset+68]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+69]);
-
         cout << uchar2hex(buffer[DataDrive][EntryOffset+70]) << uchar2hex(buffer[DataDrive][EntryOffset+71]) << uchar2hex(buffer[DataDrive][EntryOffset+72]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+73]) << uchar2hex(buffer[DataDrive][EntryOffset+74]) << uchar2hex(buffer[DataDrive][EntryOffset+75]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+76]) << uchar2hex(buffer[DataDrive][EntryOffset+77]) << uchar2hex(buffer[DataDrive][EntryOffset+78]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+79]);
-
         cout << uchar2hex(buffer[DataDrive][EntryOffset+80]) << uchar2hex(buffer[DataDrive][EntryOffset+81]) << uchar2hex(buffer[DataDrive][EntryOffset+82]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+83]) << uchar2hex(buffer[DataDrive][EntryOffset+84]) << uchar2hex(buffer[DataDrive][EntryOffset+85]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+86]) << uchar2hex(buffer[DataDrive][EntryOffset+87]) << uchar2hex(buffer[DataDrive][EntryOffset+88]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+89]);
-
         cout << uchar2hex(buffer[DataDrive][EntryOffset+90]) << uchar2hex(buffer[DataDrive][EntryOffset+91]) << uchar2hex(buffer[DataDrive][EntryOffset+92]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+93]) << uchar2hex(buffer[DataDrive][EntryOffset+94]) << uchar2hex(buffer[DataDrive][EntryOffset+95]);
 	cout << uchar2hex(buffer[DataDrive][EntryOffset+96]) << uchar2hex(buffer[DataDrive][EntryOffset+97]) << uchar2hex(buffer[DataDrive][EntryOffset+98]);
-	cout << uchar2hex(buffer[DataDrive][EntryOffset+99]);
+	cout << uchar2hex(buffer[DataDrive][EntryOffset+99]) << "\n";
+
+	int eh_magic = ((int) (((unsigned char) buffer[DataDrive][EntryOffset+41]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+40]));
+	int eh_entries=0;
+	int eh_max, eh_depth;
+	int eloc = 0;
+	unsigned int ee_block, ee_len, ee_start_hi, ee_start_lo, ei_block, ei_leaf_lo, ei_leaf_hi, ei_unused; 
+	if (eh_magic == 0xF30A) {
+		//cout << "Extent Header Found!\n";
+		eh_entries = ((int) (((unsigned char) buffer[DataDrive][EntryOffset+43]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+42]));
+		eh_max = ((int) (((unsigned char) buffer[DataDrive][EntryOffset+45]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+44]));
+		eh_depth = ((int) (((unsigned char) buffer[DataDrive][EntryOffset+47]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+46]));
+		if (eh_depth = 0) { // leaf node
+			eloc=EntryOffset+52;
+			for (int i = 0; i < eh_entries; i++) {
+				ee_block = ((unsigned int) (((unsigned char) buffer[DataDrive][eloc+3]) << 24) + (((unsigned char) buffer[DataDrive][eloc+2]) << 16) + (((unsigned char) buffer[DataDrive][eloc+1]) << 8) + ((unsigned char) buffer[DataDrive][eloc+0]));
+				ee_len = ((int) (((unsigned char) buffer[DataDrive][eloc+5]) << 8) + ((unsigned char) buffer[DataDrive][eloc+4]));
+				ee_start_hi = ((int) (((unsigned char) buffer[DataDrive][eloc+7]) << 8) + ((unsigned char) buffer[DataDrive][eloc+6]));
+				ee_start_lo = ((unsigned int) (((unsigned char) buffer[DataDrive][eloc+11]) << 24) + (((unsigned char) buffer[DataDrive][eloc+10]) << 16) + (((unsigned char) buffer[DataDrive][eloc+9]) << 8) + ((unsigned char) buffer[DataDrive][eloc+8]));
+				eloc += 12;
+				cout << "  ee_block: " << ee_block << " ee_len: " << ee_len << " ee_start_hi: " << ee_start_hi << " ee_start_lo: " << ee_start_lo << "\n";
+
+				//uint64_t ee_start = ( (((unsigned char) buffer[DataDrive][eloc+7]) << 40) + (((unsigned char) buffer[DataDrive][eloc+6]) << 32) + (((unsigned char) buffer[DataDrive][eloc+11]) << 24) + (((unsigned char) buffer[DataDrive][eloc+10]) << 16) + (((unsigned char) buffer[DataDrive][eloc+9]) << 8) + ((unsigned char) buffer[DataDrive][eloc+8]));
+				//cout <<  "i_size: " << i_size << "\n";
+
+				cout << "  Address: " << (ee_start_lo*8) << "\n";
+			}
+		}
+		else {	// idx node
+			eloc=EntryOffset+52;
+			for (int i = 0; i < eh_entries; i++) {
+				ei_block = ((unsigned int) (((unsigned char) buffer[DataDrive][eloc+3]) << 24) + (((unsigned char) buffer[DataDrive][eloc+2]) << 16) + (((unsigned char) buffer[DataDrive][eloc+1]) << 8) + ((unsigned char) buffer[DataDrive][eloc+0]));
+				ei_leaf_lo = ((unsigned int) (((unsigned char) buffer[DataDrive][eloc+7]) << 24) + (((unsigned char) buffer[DataDrive][eloc+6]) << 16) + (((unsigned char) buffer[DataDrive][eloc+5]) << 8) + ((unsigned char) buffer[DataDrive][eloc+4]));
+				ei_leaf_hi = ((int) (((unsigned char) buffer[DataDrive][eloc+9]) << 8) + ((unsigned char) buffer[DataDrive][eloc+8]));
+				ei_unused = ((int) (((unsigned char) buffer[DataDrive][eloc+11]) << 8) + ((unsigned char) buffer[DataDrive][eloc+10]));
+				eloc += 12;
+				cout << "  ei_block: " << ei_block << " ei_leaf_lo: " << ei_leaf_lo << " ei_leaf_hi: " << ei_leaf_hi << " ei_unused: " << ei_unused << "\n";
+				cout << "  Address: " << (ei_leaf_lo*8) << "\n";
+			}
+		}
+	}
+
+	cout << "i_generation: " << ((((unsigned char) buffer[DataDrive][EntryOffset+103]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+102]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+101]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+100])) << "\n";
+	cout << "i_file_acl_lo: " << ((((unsigned char) buffer[DataDrive][EntryOffset+107]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+106]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+105]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+104])) << "\n";
+	cout << "i_obso_faddr: " << ((((unsigned char) buffer[DataDrive][EntryOffset+115]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+114]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+113]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+112])) << "\n";
+	cout << "osd2: " << uchar2hex(buffer[DataDrive][EntryOffset+116]) << uchar2hex(buffer[DataDrive][EntryOffset+117]) << uchar2hex(buffer[DataDrive][EntryOffset+118]);
+	cout << uchar2hex(buffer[DataDrive][EntryOffset+119]) << uchar2hex(buffer[DataDrive][EntryOffset+120]) << uchar2hex(buffer[DataDrive][EntryOffset+121]);
+	cout << uchar2hex(buffer[DataDrive][EntryOffset+122]) << uchar2hex(buffer[DataDrive][EntryOffset+123]) << uchar2hex(buffer[DataDrive][EntryOffset+124]);
+	cout << uchar2hex(buffer[DataDrive][EntryOffset+125]) << uchar2hex(buffer[DataDrive][EntryOffset+126]) << uchar2hex(buffer[DataDrive][EntryOffset+127]) << "\n";
+	cout << "i_extra_isize: " << ((((unsigned char) buffer[DataDrive][EntryOffset+129]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+128])) << "\n";
+	cout << "i_checksum_hi: " << ((((unsigned char) buffer[DataDrive][EntryOffset+131]) << 8) + ((unsigned char) buffer[DataDrive][EntryOffset+130])) << "\n";
+	cout << "i_crtime: " << ((((unsigned char) buffer[DataDrive][EntryOffset+147]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+146]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+145]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+144]));
+	cout << ", i_crtime_extra: " << ((unsigned int) (((unsigned char) buffer[DataDrive][EntryOffset+151]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+150]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+149]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+148])) << "\n";
+	cout << "i_version_hi: " << ((((unsigned char) buffer[DataDrive][EntryOffset+155]) << 24) + (((unsigned char) buffer[DataDrive][EntryOffset+154]) << 16) + (((unsigned char) buffer[DataDrive][EntryOffset+153]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+152])) << "\n";
+
 
 
         inode++;
@@ -481,39 +587,11 @@ int main() {
       }
 
 
-      int TotalDisks, DataDisks, BlockRadius, PBlockRadius, ParityDrive, RoundNumber, DataDrive;
-      unsigned int BlockNumber, DriveBlock, SectorsPerBlock;
+      int DataDrive;
 
-      if (raidLevel == 5) {
-        TotalDisks = currentDrive;
-        DataDisks = currentDrive-1;
-	SectorsPerBlock = raidBlockSize/bufferSize;
-	BlockNumber = (dumpRaidSector/SectorsPerBlock)+BlockAdjust;
-        DriveBlock = dumpRaidSector%(SectorsPerBlock)+(BlockNumber/(DataDisks)*SectorsPerBlock)+raidStartBlock;
-	//BlockRadius = BlockNumber%(DataDisks*TotalDisks);
-	//PBlockRadius = (BlockNumber+(ParityAdjust*DataDisks))%(DataDisks*TotalDisks);
-	//ParityDrive = ((TotalDisks-1)-(PBlockRadius/DataDisks));
-	//DataDrive = (BlockRadius%(DataDisks));
-	DataDrive = BlockNumber%(TotalDisks);
-	//if (ParityDrive <= DataDrive) {
-	//    DataDrive++;
-	//}
-      }
-      else {
-          DriveBlock = dumpRaidSector;
-          DataDrive = 0;
-      }
-
-      cout << "TotalDisks: " << TotalDisks << ", DataDisks: " << DataDisks << "\n";
-      cout << "SectorsPerBlock: " << SectorsPerBlock << ", BlockNumber: " << BlockNumber << ", BlockRadius: " << BlockRadius << ", ParityDrive: " << ParityDrive << "\n";
+	DataDrive = ReadRAID(dumpRaidSector);
 
 
-      cout << "DriveBlock: " << DriveBlock << ", DataDrive: " << DataDrive << "\n";
-
-      zeroIgnoredDrive();
-      readDrives(DriveBlock);
-      createIgnoredDrive();
-      
         //Read DriveBlock from DataDrive
         for(int i = 0; i < bufferSize; i++) {
           if (cmd.compare(0, 2, "rd") == 0) {
