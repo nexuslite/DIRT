@@ -4,7 +4,7 @@
  * Created By        Marcus Kelly
  *    Contact        nexuslite@gmail.com
  * Created On        Feb 23, 2014
- * Updated On        Mar 25, 2014
+ * Updated On        Mar 27, 2014
  * -------------------------------------------
  * Copyright 2014 Marcus Kelly
  **********************************************/
@@ -34,7 +34,7 @@ using namespace std;
 #define MAX_SEEK 2147483648
 
 string VersionHigh = "0";
-string VersionLow = "1a";
+string VersionLow = "2a";
 int raidLevel = 1;
 string fileSystem = "ext4";
 int raidStartBlock = 0;
@@ -72,10 +72,9 @@ void help() {
   cout << "  rsb=[block]          Raid Start in Drive Block (dependent on Block Size)\n";
   cout << "  rs=[string]          Raid Search\n";
   cout << "  ru[=block]           Dump Raid Block as HEX (Next if no number given)\n";
-//  cout << "  sd=[sector]          Set Directory\n";
-//  cout << "  dir                  List Directory\n";
-//  cout << "  ls                   List Directory\n";
-//  cout << "  cd=[name]            Change Directory\n";
+  cout << "  sd=[sector]          Set Directory\n";
+  cout << "  dir | ls             List Directory\n";
+  cout << "  cd=[name]            Change Directory\n";
 //  cout << "  fd=[name]            File Dump (Saves file in current system directory)\n";
 //  cout << "  save                 Save Configuration (Saves in current system directory)\n";
 //  cout << "  load                 Load Configuration (Loads in current system directory)\n";
@@ -97,7 +96,7 @@ void stat() {
   cout << "Raid Block Size: " << raidBlockSize << "\n";
   cout << "Raid Block Adjust: " << BlockAdjust << "\n";
   cout << "File System: " << fileSystem << "\n";
-//  cout << "Current Directory: " << CurrentDirectory << "\n";
+  cout << "Current Directory: " << CurrentDirectory << "\n";
   cout << "---------------------------------------\n";
 }
 
@@ -336,46 +335,337 @@ int main() {
       }
       CurrentDirectory = atoi(cmd.substr(3, cmd.length()-1).c_str());
     }
+    else if (cmd.compare(0, 2, "cd") == 0) {
+
+        if (cmd.length() < 3) {
+           cout << "Invalid input for command cd\n";
+           continue;
+        }
+
+        string Directory = cmd.substr(3, cmd.length()-1);
+	int NameLength = cmd.length()-3;
+
+	int  DataDrive;
+	DataDrive = ReadRAID(CurrentDirectory);
+	int CDPos = 1;
+
+	int pos = 0;
+	unsigned int name_len, rec_len;
+	int i, file_type;
+	int BoundryCross = 0;
+	int BoundryCrossPos = 0;
+	int BoundryIndex = 0;
+	char BoundryData[8];
+
+	do {
+
+		if (BoundryCross == 1) {
+			rec_len = ((unsigned int) (((unsigned char) BoundryData[5]) << 8) + ((unsigned char) BoundryData[4]));
+			name_len = ((unsigned char) BoundryData[6]);
+			file_type = ((unsigned char) BoundryData[7]);
+			inode = ((unsigned int) (((unsigned char) BoundryData[3]) << 24) + (((unsigned char) BoundryData[2]) << 16) + (((unsigned char) BoundryData[1]) << 8) + ((unsigned char) BoundryData[0]));
+			BoundryCross = 0;
+		}
+		else {
+			rec_len = ((unsigned int) (((unsigned char) buffer[DataDrive][pos+5]) << 8) + ((unsigned char) buffer[DataDrive][pos+4]));
+			name_len = ((unsigned char) buffer[DataDrive][pos+6]);
+			file_type = ((unsigned char) buffer[DataDrive][pos+7]);
+			inode = ((unsigned int) (((unsigned char) buffer[DataDrive][pos+3]) << 24) + (((unsigned char) buffer[DataDrive][pos+2]) << 16) + (((unsigned char) buffer[DataDrive][pos+1]) << 8) + ((unsigned char) buffer[DataDrive][pos+0]));
+		}
+
+		if (name_len != NameLength) {
+			pos += rec_len;
+			if ((pos) >= 511) {
+			   DataDrive = ReadRAID(CurrentDirectory+CDPos);
+			   CDPos++;
+			   pos=0;
+			}
+			if ((511 - pos) < 8) {
+				BoundryCross = 1;
+				BoundryIndex = 0;
+				BoundryCrossPos = 511-pos;
+				for (i=(512-pos); i; i--) {
+					BoundryData[BoundryIndex] = buffer[DataDrive][pos];
+					pos++;
+					BoundryIndex++;
+				}
+				DataDrive = ReadRAID(CurrentDirectory+CDPos);
+				CDPos++;
+				pos=0;
+				while (BoundryIndex < 8) {
+					BoundryData[BoundryIndex] = buffer[DataDrive][pos];
+					pos++;
+					BoundryIndex++;
+				}
+				pos = -(BoundryCrossPos+1);
+
+			}
+
+			for (i = 0; i < 8; i++) {
+
+				cout << uchar2hex(BoundryData[i]) << " ";
+			}
+			cout << "\n";
+			continue;
+		}
+
+		if (inode == 0) {
+			break;
+		}
+
+
+		for (i = 0; i < name_len; i++) {
+			if ((pos+i) >= 511) {
+				DataDrive = ReadRAID(CurrentDirectory+CDPos);
+				CDPos++;
+				pos = 0;
+			}
+			if (buffer[DataDrive][pos+8+i] == Directory[i]) {
+				continue;
+			}
+			else {
+				break;
+			}
+		}
+
+		if (i == NameLength) {
+			break;
+		}
+
+		pos += rec_len;
+		if ((pos) >= 511) {
+		   DataDrive = ReadRAID(CurrentDirectory+CDPos);
+		   CDPos++;
+		   pos=0;
+		}
+
+		if ((511 - pos) < 8) {
+			BoundryCross = 1;
+			BoundryIndex = 0;
+			BoundryCrossPos = 511-pos;
+			for (i=(512-pos); i; i--) {
+				BoundryData[BoundryIndex] = buffer[DataDrive][pos];
+				pos++;
+				BoundryIndex++;
+			}
+			DataDrive = ReadRAID(CurrentDirectory+CDPos);
+			CDPos++;
+			pos=0;
+			while (BoundryIndex < 8) {
+				BoundryData[BoundryIndex] = buffer[DataDrive][pos];
+				pos++;
+				BoundryIndex++;
+			}
+			pos = -(BoundryCrossPos+1);
+
+		}
+
+		for (i = 0; i < 8; i++) {
+
+			cout << uchar2hex(BoundryData[i]) << " ";
+		}
+		cout << "\n";
+
+
+	} while (inode != 0);
+
+
+
+	if (inode != 0) {
+
+		int s_inodes_per_group = 8192;
+		int s_inode_size = 256;
+		int bg = (inode - 1) / s_inodes_per_group;		// Which Group Number
+		int bgsector = bg / 16 + 8;					// = bg sector
+		int bgoffset = bg % 16 * 32;
+
+		cout << "bg: " << bg << " ipg: " << s_inodes_per_group << "\n";
+		cout << "bgsector: " << bgsector << " bgoffset: " << bgoffset << "\n";
+		int  DataDrive;
+
+		DataDrive = ReadRAID(bgsector);
+
+		unsigned int bg_inode_table_lo = (((unsigned char) buffer[DataDrive][bgoffset+11]) << 24) + (((unsigned char) buffer[DataDrive][bgoffset+10]) << 16) + (((unsigned char) buffer[DataDrive][bgoffset+9]) << 8) + ((unsigned char) buffer[DataDrive][bgoffset+8]);
+		cout << "Inode Table " << bg_inode_table_lo << "\n";
+
+		int index = (inode - 1) % s_inodes_per_group;		// Which Item in that group
+		int offset = index * s_inode_size;				// Offset of Item into INODE Table
+		unsigned int InodeTableSector = bg_inode_table_lo * 8;		// sector of inode table from block group
+		unsigned int InodeEntrySector = offset / 512 + InodeTableSector;	// sector of inode entry
+		int EntryOffset = offset % 512;
+
+		unsigned int LastSector;
+
+		DataDrive = ReadRAID(InodeEntrySector);
+		LastSector = InodeEntrySector;
+		unsigned int filesize = 0;
+		int extoffset = 40+EntryOffset;
+		int extsector = bgsector;
+		int extcount = 1;
+
+
+		int eh_magic;
+		int eh_entries;
+		int eh_max, eh_depth;
+		int eloc;
+		unsigned int ee_block, ee_len, ee_start_hi, ee_start_lo, ei_block, ei_leaf_lo, ei_leaf_hi, ei_unused; 
+		unsigned int datablocks, datasector;
+		int idx = 0;
+	        // loop until done with extents
+		while (extcount > 0) {
+	
+		  DataDrive = ReadRAID(LastSector);
+		  // read extent
+		  if (idx == 0) {
+			  eh_magic = ((int) (((unsigned char) buffer[DataDrive][extoffset+1]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+0]));
+		  }
+		  if (eh_magic == 0xF30A) {
+			cout << "Extent Header\n";
+		  	eh_entries = ((int) (((unsigned char) buffer[DataDrive][extoffset+3]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+2]));
+			eh_max = ((int) (((unsigned char) buffer[DataDrive][extoffset+5]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+4]));
+			eh_depth = ((int) (((unsigned char) buffer[DataDrive][extoffset+7]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+6]));
+			extoffset += 12;
+			extcount = eh_entries;
+			datablocks = 0;
+			eh_magic=0;
+			if (eh_entries > 1 && eh_depth > 0) {
+				cout << "Can't change directory multiple extent idx.";
+				extcount = 0;
+				break;
+			}
+			idx=1;
+			continue;
+		  }
+		  else if (eh_depth == 1) { // extent idx
+			ei_block = ((unsigned int) (((unsigned char) buffer[DataDrive][extoffset+3]) << 24) + (((unsigned char) buffer[DataDrive][extoffset+2]) << 16) + (((unsigned char) buffer[DataDrive][extoffset+1]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+0]));
+			ei_leaf_lo = ((unsigned int) (((unsigned char) buffer[DataDrive][extoffset+7]) << 24) + (((unsigned char) buffer[DataDrive][extoffset+6]) << 16) + (((unsigned char) buffer[DataDrive][extoffset+5]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+4]));
+			ei_leaf_hi = ((int) (((unsigned char) buffer[DataDrive][extoffset+9]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+8]));
+			ei_unused = ((int) (((unsigned char) buffer[DataDrive][extoffset+11]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+10]));
+			cout << "  ei_block: " << ei_block << " ei_leaf_lo: " << ei_leaf_lo << " ei_leaf_hi: " << ei_leaf_hi << " ei_unused: " << ei_unused << "\n";
+			cout << "  Address: " << (ei_leaf_lo*8) << "\n";
+			extsector = ei_leaf_lo*8;
+			extoffset = 0;
+			datablocks = 0;
+			//extcount--;
+			LastSector = extsector;
+			DataDrive = ReadRAID(extsector);
+			idx=0;
+			continue;
+		  }
+		  else if (eh_depth == 0) { // extent leaf
+			ee_block = ((unsigned int) (((unsigned char) buffer[DataDrive][extoffset+3]) << 24) + (((unsigned char) buffer[DataDrive][extoffset+2]) << 16) + (((unsigned char) buffer[DataDrive][extoffset+1]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+0]));
+			ee_len = ((int) (((unsigned char) buffer[DataDrive][extoffset+5]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+4]));
+			ee_start_hi = ((int) (((unsigned char) buffer[DataDrive][extoffset+7]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+6]));
+			ee_start_lo = ((unsigned int) (((unsigned char) buffer[DataDrive][extoffset+11]) << 24) + (((unsigned char) buffer[DataDrive][extoffset+10]) << 16) + (((unsigned char) buffer[DataDrive][extoffset+9]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+8]));
+			cout << "  ee_block: " << ee_block << " ee_len: " << ee_len << " ee_start_hi: " << ee_start_hi << " ee_start_lo: " << ee_start_lo << "\n";
+			cout << "  Address: " << (ee_start_lo*8) << "\n";
+			datasector = ee_start_lo*8;
+			datablocks = ee_len*8;
+			extoffset += 12;
+			extcount--;
+			break; // pick first address and change directory
+		  }
+		  else {
+			cout << "Nothing to do.";
+			extcount = 0;
+			datablocks = 0;
+			continue;
+		  }
+	     }
+
+	     CurrentDirectory = datasector;
+
+	}
+	else {
+ 	     cout << "Directory Not Found or Not A Directory";
+	 }
+
+    }
     else if (cmd.compare(0, 2, "ls") == 0 || cmd.compare(0, 3, "dir") == 0) {
 	int  DataDrive;
 	DataDrive = ReadRAID(CurrentDirectory);
 	int CDPos = 1;
 
-	int pos = 6;
-	int name_len;
+	int pos = 0;
+	unsigned int name_len, rec_len;
 	int i, file_type;
+	int BoundryCross = 0;
+	int BoundryCrossPos = 0;
+	int BoundryIndex = 0;
+	char BoundryData[8];
+
 	do {
 
-		//while (((unsigned char) buffer[DataDrive][pos-1]) > 0x0F) {
-		//	pos += 4;
-		//}
-		name_len = ((unsigned char) buffer[DataDrive][pos]);
-		inode = ((unsigned int) (((unsigned char) buffer[DataDrive][pos-3]) << 24) + (((unsigned char) buffer[DataDrive][pos-4]) << 16) + (((unsigned char) buffer[DataDrive][pos-5]) << 8) + ((unsigned char) buffer[DataDrive][pos-6]));
-		pos += 2;
+		if (BoundryCross == 1) {
+			rec_len = ((unsigned int) (((unsigned char) BoundryData[5]) << 8) + ((unsigned char) BoundryData[4]));
+			name_len = ((unsigned char) BoundryData[6]);
+			file_type = ((unsigned char) BoundryData[7]);
+			inode = ((unsigned int) (((unsigned char) BoundryData[3]) << 24) + (((unsigned char) BoundryData[2]) << 16) + (((unsigned char) BoundryData[1]) << 8) + ((unsigned char) BoundryData[0]));
+			BoundryCross = 0;
+		}
+		else {
+			rec_len = ((unsigned int) (((unsigned char) buffer[DataDrive][pos+5]) << 8) + ((unsigned char) buffer[DataDrive][pos+4]));
+			name_len = ((unsigned char) buffer[DataDrive][pos+6]);
+			file_type = ((unsigned char) buffer[DataDrive][pos+7]);
+			inode = ((unsigned int) (((unsigned char) buffer[DataDrive][pos+3]) << 24) + (((unsigned char) buffer[DataDrive][pos+2]) << 16) + (((unsigned char) buffer[DataDrive][pos+1]) << 8) + ((unsigned char) buffer[DataDrive][pos+0]));
+		}
+
+		if (inode == 0) {
+			break;
+		}
+
 		for (i = 0; i < name_len; i++) {
-			cout << buffer[DataDrive][pos+i];
-			if ((pos+i) >= 255) {
+			if ((pos+i) >= 511) {
 				DataDrive = ReadRAID(CurrentDirectory+CDPos);
 				CDPos++;
+				pos=0;
 			}
+			cout << buffer[DataDrive][pos+8+i];
 		}
 
-		cout << "     " << inode << "\n";
-
-		while ((name_len % 4) != 0) {
-			name_len++;
+		if (file_type == 2) {
+			cout << "/             " << inode << " " << file_type << " " << name_len << " " << rec_len << "\n";
+		}
+		else {
+			cout << "              " << inode << " " << file_type << " " << name_len << " " << rec_len << "\n";
 		}
 
-
-		// cout << dir_name << "\n";
-		pos += name_len + 6;
-		if ((pos) >= 255) {
+		pos += rec_len;
+		if ((pos) >= 511) {
 		   DataDrive = ReadRAID(CurrentDirectory+CDPos);
 		   CDPos++;
+		   pos=0;
 		}
 
-		name_len = ((unsigned char) buffer[DataDrive][pos]);
-	} while (name_len != 0);
+		if ((511 - pos) < 8) {
+			BoundryCross = 1;
+			BoundryIndex = 0;
+			BoundryCrossPos = 511-pos;
+			for (i=(512-pos); i; i--) {
+				BoundryData[BoundryIndex] = buffer[DataDrive][pos];
+				pos++;
+				BoundryIndex++;
+			}
+			DataDrive = ReadRAID(CurrentDirectory+CDPos);
+			CDPos++;
+			pos=0;
+			while (BoundryIndex < 8) {
+				BoundryData[BoundryIndex] = buffer[DataDrive][pos];
+				pos++;
+				BoundryIndex++;
+			}
+			pos = -(BoundryCrossPos+1);
+
+		}
+/*
+		for (i = 0; i < 8; i++) {
+
+			cout << uchar2hex(BoundryData[i]) << " ";
+		}
+		cout << "\n";
+*/
+
+	} while (inode != 0);
 
     }
     else if (cmd.compare(0, 2, "rl") == 0) {
@@ -460,8 +750,10 @@ int main() {
 	unsigned int InodeEntrySector = offset / 512 + InodeTableSector;	// sector of inode entry
 	int EntryOffset = offset % 512;
 
-	DataDrive = ReadRAID(InodeEntrySector);
+	unsigned int LastSector;
 
+	DataDrive = ReadRAID(InodeEntrySector);
+	LastSector = InodeEntrySector;
 	unsigned int filesize = 0;
 	int extoffset = 40+EntryOffset;
 	int extsector = bgsector;
@@ -476,24 +768,31 @@ int main() {
 	int eloc;
 	unsigned int ee_block, ee_len, ee_start_hi, ee_start_lo, ei_block, ei_leaf_lo, ei_leaf_hi, ei_unused; 
 	unsigned int datablocks, datasector;
+	int idx = 0;
         // loop until done with extents
 	while (extcount > 0) {
 
+	  DataDrive = ReadRAID(LastSector);
 	  // read extent
-	  eh_magic = ((int) (((unsigned char) buffer[DataDrive][extoffset+1]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+0]));
+	  if (idx == 0) {
+		  eh_magic = ((int) (((unsigned char) buffer[DataDrive][extoffset+1]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+0]));
+	  }
 	  if (eh_magic == 0xF30A) {
-		cout << "Extent Header\n";
+		//cout << "Extent Header\n";
 	  	eh_entries = ((int) (((unsigned char) buffer[DataDrive][extoffset+3]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+2]));
 		eh_max = ((int) (((unsigned char) buffer[DataDrive][extoffset+5]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+4]));
 		eh_depth = ((int) (((unsigned char) buffer[DataDrive][extoffset+7]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+6]));
+		cout << "  eh_magic: " << eh_magic << " eh_entries: " << eh_entries << " eh_max: " << eh_max << " eh_depth: " << eh_depth << "\n";
 		extoffset += 12;
 		extcount = eh_entries;
 		datablocks = 0;
+		eh_magic=0;
 		if (eh_entries > 1 && eh_depth > 0) {
 			cout << "Can't pull file multiple extent idx.";
 			extcount = 0;
 			break;
 		}
+		idx=1;
 		continue;
 	  }
 	  else if (eh_depth == 1) { // extent idx
@@ -507,22 +806,22 @@ int main() {
 		extoffset = 0;
 		datablocks = 0;
 		//extcount--;
+		LastSector = extsector;
 		DataDrive = ReadRAID(extsector);
+		idx=0;
 		continue;
 	  }
 	  else if (eh_depth == 0) { // extent leaf
-		for (int i = 0; i < eh_entries; i++) {
-			ee_block = ((unsigned int) (((unsigned char) buffer[DataDrive][extoffset+3]) << 24) + (((unsigned char) buffer[DataDrive][extoffset+2]) << 16) + (((unsigned char) buffer[DataDrive][extoffset+1]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+0]));
-			ee_len = ((int) (((unsigned char) buffer[DataDrive][extoffset+5]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+4]));
-			ee_start_hi = ((int) (((unsigned char) buffer[DataDrive][extoffset+7]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+6]));
-			ee_start_lo = ((unsigned int) (((unsigned char) buffer[DataDrive][extoffset+11]) << 24) + (((unsigned char) buffer[DataDrive][extoffset+10]) << 16) + (((unsigned char) buffer[DataDrive][extoffset+9]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+8]));
-			cout << "  ee_block: " << ee_block << " ee_len: " << ee_len << " ee_start_hi: " << ee_start_hi << " ee_start_lo: " << ee_start_lo << "\n";
-			cout << "  Address: " << (ee_start_lo*8) << "\n";
-			datasector = ee_start_lo*8;
-			datablocks = ee_len*8;
-			extoffset += 12;
-			extcount--;
-		}
+		ee_block = ((unsigned int) (((unsigned char) buffer[DataDrive][extoffset+3]) << 24) + (((unsigned char) buffer[DataDrive][extoffset+2]) << 16) + (((unsigned char) buffer[DataDrive][extoffset+1]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+0]));
+		ee_len = ((int) (((unsigned char) buffer[DataDrive][extoffset+5]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+4]));
+		ee_start_hi = ((int) (((unsigned char) buffer[DataDrive][extoffset+7]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+6]));
+		ee_start_lo = ((unsigned int) (((unsigned char) buffer[DataDrive][extoffset+11]) << 24) + (((unsigned char) buffer[DataDrive][extoffset+10]) << 16) + (((unsigned char) buffer[DataDrive][extoffset+9]) << 8) + ((unsigned char) buffer[DataDrive][extoffset+8]));
+		cout << "  ee_block: " << ee_block << " ee_len: " << ee_len << " ee_start_hi: " << ee_start_hi << " ee_start_lo: " << ee_start_lo << "\n";
+		cout << "  Address: " << (ee_start_lo*8) << "\n";
+		datasector = ee_start_lo*8;
+		datablocks = ee_len*8;
+		extoffset += 12;
+		extcount--;
 	  }
 	  else {
 		cout << "Nothing to do.";
@@ -532,7 +831,7 @@ int main() {
 	  }
 
 	  while (datablocks > 0 && filesize > 0) {
-		//cout <<  "filesize: " << filesize << "\n";
+	        cout << "Filesize: " << filesize << " DataBlocks: " << datablocks << "\r" << std::flush;
 		DataDrive = ReadRAID(datasector);
 		if (filesize < 512) {
 			file.write(&buffer[DataDrive][0], filesize);
@@ -553,8 +852,9 @@ int main() {
 	  }
 
         }
-	if (filesize > 0 || datablocks > 0 || extcount > 0) {
+	if (filesize > 0 || datablocks > 7 || extcount > 0) {
 		cout << "Pull failed to complete file extraction.\n";
+		cout << " filesize: " << filesize << " datablocks: " << datablocks <<  " extcount: " << extcount << "\n";
 	}
 	file.close();
     }
@@ -712,6 +1012,7 @@ int main() {
       int DataDrive;
 
 	DataDrive = ReadRAID(dumpRaidSector);
+	cout << "Drive: " << DataDrive << "\n";
 
 
         //Read DriveBlock from DataDrive
