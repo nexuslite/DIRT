@@ -4,7 +4,7 @@
  * Created By        Marcus Kelly
  *    Contact        nexuslite@gmail.com
  * Created On        Feb 23, 2014
- * Updated On        Mar 31, 2014
+ * Updated On        Apr 03, 2014
  * -------------------------------------------
  * Copyright 2014 Marcus Kelly
  **********************************************/
@@ -161,7 +161,7 @@ class Drive {
 				}
 
 			        dsize = disk.tellg();
-			        disk.seekg( 0, ios::end );
+			        disk.seekg(0, ios::end);
 			        dsize = disk.tellg();
 				if (dsize < Max || Max == 0) {
 					Max = (unsigned long long) dsize;
@@ -205,7 +205,7 @@ class Drive {
 				}
 
 			        dsize = disk.tellg();
-			        disk.seekg( 0, ios::end );
+			        disk.seekg(0, ios::end);
 			        dsize = disk.tellg() - dsize;
 				dsize = dsize/512;
 

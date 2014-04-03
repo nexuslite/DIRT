@@ -4,16 +4,10 @@
  * Created By        Marcus Kelly
  *    Contact        nexuslite@gmail.com
  * Created On        Feb 23, 2014
- * Updated On        Mar 31, 2014
+ * Updated On        Apr 03, 2014
  * -------------------------------------------
  * Copyright 2014 Marcus Kelly
  **********************************************/
-#include <iostream>
-#include <fstream>
-#include <cerrno>
-#include <stdexcept>
-#include <cstring>
-#include <vector>   /* vector */
 #include <stdlib.h> /* atoi */
 #include <sys/time.h> /* SetTimer & CheckTimer */
 #include <stdio.h>
@@ -26,30 +20,14 @@
 
 using namespace std;
 
-#define BUF_SIZE 512
-#define MAX_SEEK 2147483648
-
 string VersionHigh = "0";
 string VersionMid = "3";
-string VersionLow = "1a";
-//int raidLevel = 1;
+string VersionLow = "2a";
 string fileSystem = "ext4";
-//int raidStartBlock = 0;
-//int raidBlockSize = 65536;
-//int bufferSize = BUF_SIZE;
-//string drives[10];
-//vector<vector <char> > buffer;
-//int currentDrive = 0;
-//int maxDrives = 10;
 int dumpIndex = 0;
 int searchIndex = 0;
 int searchIndexFlag = 0;
-//unsigned int dumpRaidSector = 0;
-//int ignoredDrive = -1;
-//streampos dsize = 0;
 int inode;
-//int BlockAdjust=0;
-//unsigned int CurrentDirectory = 0;
 string filename;
 bool DrivesDisplayAll = true;
 
@@ -62,7 +40,7 @@ void help() {
 	cout << "  h                    Help\n";
 	cout << "  reset                Reset Configurations\n";
 	cout << "  stat                 Display current configuration\n";
-	cout << "  w                    Quit and Save Current Configuration\n";
+	cout << "  w                    Quit and Save Configuration\n";
 	cout << "  q                    Quit\n";
 
 	cout << "  add=[drive]          Add Drive\n";
@@ -72,8 +50,8 @@ void help() {
 	cout << "  d[=block]            Dump Drive Block as ASCII (Next if no number given)\n";
 	cout << "  u[=block]            Dump Drive Block as HEX (Next if no number given)\n";
 	cout << "  bs                   Block Size Selection Menu\n";
-	cout << "  dda                  Display Data from All Drives ON/OFF\n"; 
-	cout << "  ba=[block]           Raid Block Adjust, Added to the Current Block for Proper Rotation\n";
+	cout << "  ddaq                  Display Data from All Drives ON/OFF\n"; 
+	cout << "  ba=[block]           Raid Block Adjust, Padding for Data Start\n";
 	cout << "  rbs                  Raid Block Size Selection Menu\n";
 	cout << "  rl=[level]           Set Raid Level [0, 1, 2, 3, 4, 5, 6]\n";
 	cout << "  rsb=[block]          Raid Start in Drive Block (dependent on Block Size)\n";
@@ -86,6 +64,7 @@ void help() {
 	cout << "  dir | ls             List Directory\n";
 	cout << "  cd=[name]            Change Directory\n";
 	cout << "  fd=[name]            File Dump (Saves file in current system directory)\n";
+        cout << "                           * will dump all files in a directory\n";
 	cout << "  pull=[inode]         Pull from drive and save in current directory as inode #\n";
 	//cout << "  root                 Find Root Directory\n";
 
@@ -131,11 +110,9 @@ int LoadConfig(Drive* drive, Ext* ext) {
 		return 1;
 	}
 
-	//file.read(&Buffer[0], sizeof(Buffer));
 	file.getline(Buffer, 512);
 	if (!file) {
 		cout << "\nCould not read config file.\n";
-		//throw(runtime_error(std::strerror(errno)));
 		return 1;
 	}
 
@@ -216,17 +193,15 @@ int LoadConfig(Drive* drive, Ext* ext) {
 		}
 	}
 
-
 	file.close();
 	return 0;
 }
 
 int main() {
+	int run = 1;
 
 	Drive* drive = new Drive;
 	Ext* ext = new Ext(drive);
-
-	int run = 1;
 
 	/* Print program name and copyright info */
 	cout << "Disk Image Recovery Tool (DIRT) - Version " << VersionHigh << "." << VersionMid << "." << VersionLow << "\n";
@@ -246,10 +221,6 @@ int main() {
 		if (cmd.compare(0, 3, "add") == 0) {
 			if (cmd.length() < 4) {
 				cout << "Invalid input for command a\n";
-				continue;
-			}
-			if (currentDrive >= maxDrives) {
-				cout << "No more drives may be added\n";
 				continue;
 			}
 			cout << "Adding " << cmd.substr(4, cmd.length()-4) << "\n";
@@ -473,7 +444,8 @@ int main() {
 				cout << "\n\n";
 			}
 
-			dumpIndex++;
+			//dumpIndex++;
+			dumpIndex += drive->GetSectorsPerBuffer();
       
 		}
 		else if (cmd.compare(0, 4, "pull") == 0) {
@@ -560,18 +532,14 @@ int main() {
 			cout << "i_crtime: " << myinode.i_crtime << ", i_crtime_extra: " << myinode.i_crtime_extra << "\n";
 			cout << "i_version_hi: " << myinode.i_version_hi << "\n";
 	
-
 			inode++;
 
 		}
-
-
 		/* Help command */
-
 		else if (cmd.compare("h") == 0) {
 			help();
 		}
-
+		/* Search Start command */
 		else if (cmd.compare(0, 2, "ss") == 0) {
 			if (cmd.length() > 3) {
 				searchIndex = atoi(cmd.substr(3, cmd.length()-1).c_str());
@@ -581,6 +549,10 @@ int main() {
 
 		/* Seach disk command */
 		else if (cmd.compare(0, 1, "s") == 0) {
+			// open search.txt
+			ofstream file("search.txt", ios::trunc);
+			if(!file)
+				throw(runtime_error(strerror(errno)));
 			int activeSearch = 1;
 			string searchString = cmd.substr(2, cmd.length()-1);
 			int stringIndex = 0;
@@ -601,6 +573,8 @@ int main() {
 			}
 
 			cout << "Searching for " << searchString << "\n";
+			file << "Searching for " << searchString << "\n";
+			file.close();
 			//cout << "Press any key to stop the search\n";
 
 			struct timeval tv;
@@ -611,14 +585,14 @@ int main() {
 			while(activeSearch) {
 
 				if (checkTimer(tv,1)==1) {
-					bytesPerSec = bufferCount*bufferSize;
+					bytesPerSec = bufferCount*drive->GetBufferSize();
 					bufferCount = 0;
 				}
 
 				drive->Read(searchIndex);
 
 				cout << "Block " << searchIndex << "/" << SectorCount << " [" << bytesPerSec << "B/Sec]   \r" << std::flush;
-				bufferCount += currentDrive+1;
+				bufferCount += drive->GetDeviceCount()+1;
 
 				// search each buffer
 				for(int i = 0; i < drive->GetDeviceCount(); i++) {
@@ -626,7 +600,13 @@ int main() {
 						data = drive->GetAltDeviceData(i);
 						if (data[j] == searchString[stringIndex]) {
 							if (stringIndex == searchString.length()) {
+								ofstream file("search.txt", ios::out | ios::app | ios::binary);
+								if(!file)
+									throw(runtime_error(strerror(errno)));
+								//file.seekp(0, ios::end);
 								cout << "Found: Disk=" << drive->GetDevice(i) << " Block=" << searchIndex << "                    \n";
+								file << "Found: Disk=" << drive->GetDevice(i) << " Block=" << searchIndex << "\n";
+								file.close();
 								stringIndex = 0;
 								break;
 							}
@@ -639,6 +619,7 @@ int main() {
 				}
 				searchIndex += drive->GetSectorsPerBuffer();
 			} // while(activeSearch)
+			file.close();
 		}
 		/* Reset configuration command */
 		else if (cmd.compare("reset") == 0) {

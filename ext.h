@@ -4,13 +4,18 @@
  * Created By        Marcus Kelly
  *    Contact        nexuslite@gmail.com
  * Created On        Feb 23, 2014
- * Updated On        Mar 31, 2014
+ * Updated On        Apr 03, 2014
  * -------------------------------------------
  * Copyright 2014 Marcus Kelly
  **********************************************/
 #ifndef EXT
 #define EXT
 
+#include <fstream>
+#include <iostream>
+#include <cstring>
+#include <cerrno>
+#include <stdexcept>
 #include "drive.h"
 
 typedef struct ext_super_block {
@@ -188,17 +193,27 @@ class Ext {
 		ext_dir_entry GetFirstDirEntry() {
 			DirectoryIndex = 0;
 			DirectorySectorIndex = 0;
+			TotalBytes = 0;
 			return GetNextDirEntry();
 		}
 		ext_dir_entry GetNextDirEntry() {
-			char EntryData[264];
-			char * data = drive->Read(Directory+DirectorySectorIndex);
+			unsigned int rec_len;
 			int adj = 0;
-			memcpy(&DirEntry, &data[DirectoryIndex], 4);
-			if (DirEntry.inode == 0) {
+			char EntryData[264];
+			//memcpy(&DirEntry, &data[DirectoryIndex], 4);
+			//if (DirEntry.inode == 0) {
+			//	return DirEntry;
+			//}
+			if (TotalBytes >= 4096-8) {
+				DirEntry.inode = 0;
+				DirEntry.rec_len = 0;
+				DirEntry.name_len = 0;
+				DirEntry.file_type = 0;
+				DirEntry.name[0] = '\0';
 				return DirEntry;
 			}
 
+			char * data = drive->Read(Directory+DirectorySectorIndex);
 			if (sizeof(ext_dir_entry) < drive->GetBufferSize()-DirectoryIndex) {
 				memcpy(&EntryData, &data[DirectoryIndex], sizeof(ext_dir_entry));
 			}
@@ -227,26 +242,22 @@ class Ext {
 
 			DirEntry.name[DirEntry.name_len] = '\0';
 
-			unsigned int rec_len = DirEntry.rec_len;
-			if (rec_len > drive->GetBufferSize()-DirectoryIndex) {
-				DirectorySectorIndex++;
-				data = drive->Read(Directory+DirectorySectorIndex);
-				rec_len -= drive->GetBufferSize()-DirectoryIndex;
-			}
-			while (rec_len > drive->GetBufferSize()) {
+			rec_len = DirEntry.rec_len;
+			while (drive->GetBufferSize()-DirectoryIndex < rec_len) {
 				DirectorySectorIndex++;
 				data = drive->Read(Directory+DirectorySectorIndex);
 				rec_len -= drive->GetBufferSize();
+				TotalBytes += drive->GetBufferSize();
+				DirectoryIndex = 0;
+				adj = 0;
 			}
 			DirectoryIndex += rec_len-adj;
-			if (DirEntry.rec_len == 0) {
-				DirEntry.inode = 0;
-			}
+			TotalBytes += rec_len;
 			return DirEntry;
 		}
 		void ShowDirectory() {
 			ext_dir_entry thisDirEntry = GetFirstDirEntry();
-			while (thisDirEntry.inode != 0) {
+			while (strlen(thisDirEntry.name) != 0) {
 				if (thisDirEntry.file_type == 2) {
 					cout << thisDirEntry.name << "/             " << thisDirEntry.inode << " " << (int) thisDirEntry.file_type << " " << (int) thisDirEntry.name_len << " " << thisDirEntry.rec_len << "\n";
 				}
@@ -255,22 +266,21 @@ class Ext {
 				}
 				thisDirEntry = GetNextDirEntry();
 			}
+			cout << "Total Bytes: " << TotalBytes << "\n";
 		}
-		void ChangeDirectory(string Name) {
+		ext_dir_entry NameToInode (string Name) {
 			int i;
-			for (int i = 0; i < Name.length(); i++) {
+			for (i = 0; i < Name.length(); i++) {
 				if (Name[i] == '^') {
 					Name[i] = ' ';
 				}
 			}
 			ext_dir_entry thisDirEntry = GetFirstDirEntry();
-			while (thisDirEntry.inode != 0) {
-				//cout << strlen(thisDirEntry.name) << " " << Name.length() << "\n";
+			while (strlen(thisDirEntry.name) != 0) {
 				if (strlen(thisDirEntry.name) != Name.length()) {
 					thisDirEntry = GetNextDirEntry();
 					continue;
 				}
-				//cout << thisDirEntry.name << " " << Name << "\n";
 				for (i = 0; i < strlen(thisDirEntry.name); i++) {
 					if (thisDirEntry.name[i] == Name[i]) {
 						continue;
@@ -284,8 +294,11 @@ class Ext {
 				}
 				thisDirEntry = GetNextDirEntry();
 			}
-			if (thisDirEntry.inode != 0) {
-				//cout << "Inode: " << thisDirEntry.inode << "\n";
+			return thisDirEntry;
+		}
+		void ChangeDirectory(string Name) {
+			ext_dir_entry thisDirEntry = NameToInode(Name);
+			if (thisDirEntry.inode != 0 && thisDirEntry.file_type == 2) {
 				ext_inode DirInode = ReadInode(thisDirEntry.inode);
 				ext_extent_header ExtentHeader;
 				ext_extent_leaf ExtentLeaf;
@@ -313,35 +326,21 @@ class Ext {
 			return Directory;
 		}
 		void FileDump(string Name) {
-			int i;
-			for (int i = 0; i < Name.length(); i++) {
-				if (Name[i] == '^') {
-					Name[i] = ' ';
-				}
-			}
-			ext_dir_entry thisDirEntry = GetFirstDirEntry();
-			while (thisDirEntry.inode != 0) {
-				//cout << strlen(thisDirEntry.name) << " " << Name.length() << "\n";
-				if (strlen(thisDirEntry.name) != Name.length()) {
+			if (Name.compare("*") == 0) {
+				ext_dir_entry thisDirEntry = GetFirstDirEntry();
+				while (strlen(thisDirEntry.name) != 0) {
+					cout << thisDirEntry.name << "\n";
+					if (thisDirEntry.file_type == 1) {
+						PullInode(thisDirEntry.inode, thisDirEntry.name);
+					}
 					thisDirEntry = GetNextDirEntry();
-					continue;
 				}
-				//cout << thisDirEntry.name << " " << Name << "\n";
-				for (i = 0; i < strlen(thisDirEntry.name); i++) {
-					if (thisDirEntry.name[i] == Name[i]) {
-						continue;
-					}
-					else {
-						break;
-					}
-				}
-				if (i == Name.length()) {
-					break;
-				}
-				thisDirEntry = GetNextDirEntry();
 			}
-			if (thisDirEntry.inode != 0) {
-				PullInode(thisDirEntry.inode, Name);
+			else {
+				ext_dir_entry thisDirEntry = NameToInode(Name);
+				if (thisDirEntry.inode != 0 && thisDirEntry.file_type == 1) {
+					PullInode(thisDirEntry.inode, Name);
+				}
 			}
 		}
 		void PullInode(unsigned int InInode, string filename) {
@@ -484,6 +483,7 @@ class Ext {
 			return Inode;
 		}
 	private:
+		int TotalBytes;
 		unsigned int Directory;
 		unsigned int DirectoryIndex;
 		unsigned int DirectorySectorIndex;
